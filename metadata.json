@@ -1,0 +1,5 @@
+{
+  "name": "Furbo 攝影機檢測分配系統",
+  "description": "Furbo 客服專用的攝影機檢測台數分配工具，支援 TW 與 CN 團隊公平分配規則與月度累計統計。",
+  "requestFramePermissions": []
+}
