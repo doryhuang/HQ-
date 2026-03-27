@@ -14,9 +14,23 @@ import {
   Save,
   ChevronRight,
   Calculator,
-  AlertCircle
+  AlertCircle,
+  LogIn,
+  LogOut
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { db, auth, signIn, logout } from './firebase';
+import { 
+  collection, 
+  addDoc, 
+  onSnapshot, 
+  query, 
+  orderBy, 
+  deleteDoc, 
+  doc,
+  getDocFromServer
+} from 'firebase/firestore';
+import { onAuthStateChanged, User } from 'firebase/auth';
 
 // --- Types ---
 
@@ -48,27 +62,66 @@ const STORAGE_KEY = 'furbo_allocation_history';
 
 export default function App() {
   // --- State ---
+  const [user, setUser] = useState<User | null>(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
   const [staff, setStaff] = useState<Staff[]>(INITIAL_STAFF);
   const [totalUnitsInput, setTotalUnitsInput] = useState<string>('');
   const [history, setHistory] = useState<AllocationRecord[]>([]);
   const [currentResult, setCurrentResult] = useState<{ [name: string]: number } | null>(null);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
 
-  // --- Effects ---
+  // --- Firebase Auth ---
   useEffect(() => {
-    const savedHistory = localStorage.getItem(STORAGE_KEY);
-    if (savedHistory) {
-      try {
-        setHistory(JSON.parse(savedHistory));
-      } catch (e) {
-        console.error('Failed to parse history', e);
-      }
-    }
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setIsAuthReady(true);
+    });
+    return () => unsubscribe();
   }, []);
 
+  // --- Firebase Firestore Connection Test ---
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
-  }, [history]);
+    async function testConnection() {
+      try {
+        await getDocFromServer(doc(db, 'test', 'connection'));
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('the client is offline')) {
+          console.error("Please check your Firebase configuration.");
+        }
+      }
+    }
+    testConnection();
+  }, []);
+
+  // --- Firebase Firestore Data Sync ---
+  useEffect(() => {
+    if (!user) {
+      setHistory([]);
+      return;
+    }
+
+    const q = query(collection(db, 'allocations'), orderBy('date', 'desc'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const records: AllocationRecord[] = [];
+      snapshot.forEach((doc) => {
+        records.push({ ...doc.data(), id: doc.id } as AllocationRecord);
+      });
+      setHistory(records);
+    }, (error) => {
+      const errInfo = {
+        error: error.message,
+        operationType: 'list',
+        path: 'allocations',
+        authInfo: {
+          userId: auth.currentUser?.uid,
+          email: auth.currentUser?.email
+        }
+      };
+      console.error('Firestore Error: ', JSON.stringify(errInfo));
+    });
+
+    return () => unsubscribe();
+  }, [user]);
 
   // --- Helpers ---
   const toggleInOffice = (id: string) => {
@@ -123,23 +176,49 @@ export default function App() {
     setCurrentResult(result);
   };
 
-  const saveAllocation = () => {
-    if (!currentResult) return;
+  const saveAllocation = async () => {
+    if (!currentResult || !user) return;
     
-    const newRecord: AllocationRecord = {
-      id: Date.now().toString(),
+    const newRecord = {
       date: new Date().toISOString(),
       totalUnits: parseInt(totalUnitsInput) || 0,
       allocations: currentResult
     };
 
-    setHistory(prev => [newRecord, ...prev]);
-    setTotalUnitsInput('');
-    setCurrentResult(null);
+    try {
+      await addDoc(collection(db, 'allocations'), newRecord);
+      setTotalUnitsInput('');
+      setCurrentResult(null);
+    } catch (error) {
+      const errInfo = {
+        error: error instanceof Error ? error.message : String(error),
+        operationType: 'create',
+        path: 'allocations',
+        authInfo: {
+          userId: auth.currentUser?.uid,
+          email: auth.currentUser?.email
+        }
+      };
+      console.error('Firestore Error: ', JSON.stringify(errInfo));
+    }
   };
 
-  const deleteRecord = (id: string) => {
-    setHistory(prev => prev.filter(r => r.id !== id));
+  const deleteRecord = async (id: string) => {
+    if (!user) return;
+    try {
+      await deleteDoc(doc(db, 'allocations', id));
+    } catch (error) {
+      const errInfo = {
+        error: error instanceof Error ? error.message : String(error),
+        operationType: 'delete',
+        path: `allocations/${id}`,
+        authInfo: {
+          userId: auth.currentUser?.uid,
+          email: auth.currentUser?.email
+        }
+      };
+      console.error('Firestore Error: ', JSON.stringify(errInfo));
+    }
   };
 
   // --- Statistics ---
@@ -253,7 +332,7 @@ export default function App() {
       {/* Header */}
       <header className="bg-white border-b border-[#E7E5E4] px-6 py-8">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-end justify-between gap-4">
-          <div>
+          <div className="flex-1">
             <div className="flex items-center gap-2 text-[#A8A29E] text-xs font-mono uppercase tracking-widest mb-2">
               <Camera size={14} />
               <span>Furbo Support Operations</span>
@@ -262,21 +341,68 @@ export default function App() {
               HQ 檢測機器輪值統計
             </h1>
           </div>
-          <div 
-            onClick={() => setShowHistoryModal(true)}
-            className="flex items-center gap-4 bg-[#F5F5F4] px-4 py-2 rounded-lg border border-[#E7E5E4] cursor-pointer hover:bg-[#E7E5E4] transition-colors group"
-          >
-            <div className="text-right">
-              <p className="text-[10px] uppercase font-mono text-[#78716C] leading-none">當月分配結果</p>
-              <p className="text-2xl font-mono font-medium">{totalMonthlyUnits}</p>
+          
+          <div className="flex items-center gap-4">
+            {isAuthReady && (
+              user ? (
+                <div className="flex items-center gap-3 bg-white border border-[#E7E5E4] px-3 py-2 rounded-xl">
+                  {user.photoURL && (
+                    <img src={user.photoURL} alt={user.displayName || ''} className="w-8 h-8 rounded-full" referrerPolicy="no-referrer" />
+                  )}
+                  <div className="hidden sm:block">
+                    <p className="text-[10px] font-mono text-[#A8A29E] uppercase leading-none">Logged in as</p>
+                    <p className="text-sm font-bold">{user.displayName}</p>
+                  </div>
+                  <button 
+                    onClick={logout}
+                    className="p-2 text-[#A8A29E] hover:text-[#1C1917] transition-colors"
+                    title="登出"
+                  >
+                    <LogOut size={18} />
+                  </button>
+                </div>
+              ) : (
+                <button 
+                  onClick={signIn}
+                  className="flex items-center gap-2 bg-[#1C1917] text-white px-4 py-2 rounded-xl font-medium hover:bg-[#44403C] transition-colors"
+                >
+                  <LogIn size={18} />
+                  Google 登入
+                </button>
+              )
+            )}
+
+            <div 
+              onClick={() => setShowHistoryModal(true)}
+              className="flex items-center gap-4 bg-[#F5F5F4] px-4 py-2 rounded-lg border border-[#E7E5E4] cursor-pointer hover:bg-[#E7E5E4] transition-colors group"
+            >
+              <div className="text-right">
+                <p className="text-[10px] uppercase font-mono text-[#78716C] leading-none">當月分配結果</p>
+                <p className="text-2xl font-mono font-medium">{totalMonthlyUnits}</p>
+              </div>
+              <Calendar className="text-[#A8A29E] group-hover:text-[#1C1917] transition-colors" size={20} />
             </div>
-            <Calendar className="text-[#A8A29E] group-hover:text-[#1C1917] transition-colors" size={20} />
           </div>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto px-6 py-12 space-y-16">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
+        {!user && isAuthReady ? (
+          <div className="flex flex-col items-center justify-center py-24 bg-white rounded-3xl border border-[#E7E5E4] shadow-sm">
+            <AlertCircle size={48} className="text-[#A8A29E] mb-4 opacity-20" />
+            <h2 className="text-xl font-bold mb-2">請先登入以同步資料</h2>
+            <p className="text-[#78716C] mb-8">登入後即可與其他團隊成員同步歷史紀錄與統計數據。</p>
+            <button 
+              onClick={signIn}
+              className="flex items-center gap-2 bg-[#1C1917] text-white px-8 py-4 rounded-2xl font-bold hover:bg-[#44403C] transition-all transform hover:scale-105"
+            >
+              <LogIn size={20} />
+              使用 Google 帳號登入
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
           
           {/* Left Column: Input & Staff */}
           <div className="lg:col-span-7 space-y-12">
@@ -482,6 +608,8 @@ export default function App() {
             </div>
           </section>
         </div>
+          </>
+        )}
       </main>
 
       {/* Footer */}

@@ -1,0 +1,38 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: allocations
+    // Document ID: auto-generated
+    // Fields:
+    //   - id: string (required) - Unique ID
+    //   - date: string (required) - ISO 8601 timestamp
+    //   - totalUnits: number (required) - Total units allocated
+    //   - allocations: map (required) - Name to count mapping
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isValidAllocation(data) {
+      return data.id is string &&
+             data.date is string &&
+             data.totalUnits is number &&
+             data.allocations is map;
+    }
+
+    match /allocations/{recordId} {
+      // Allow any authenticated user to read and write for this specific app
+      // In a production app, we might restrict by domain or specific users
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidAllocation(request.resource.data);
+      allow delete: if isAuthenticated();
+    }
+  }
+}

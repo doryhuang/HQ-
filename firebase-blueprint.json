@@ -1,0 +1,35 @@
+{
+  "entities": {
+    "AllocationRecord": {
+      "title": "Allocation Record",
+      "description": "A record of a single machine allocation session.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the record."
+        },
+        "date": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The timestamp when the allocation was saved."
+        },
+        "totalUnits": {
+          "type": "integer",
+          "description": "Total number of machines allocated."
+        },
+        "allocations": {
+          "type": "object",
+          "description": "A map of staff names to the number of machines they were assigned."
+        }
+      },
+      "required": ["id", "date", "totalUnits", "allocations"]
+    }
+  },
+  "firestore": {
+    "/allocations/{recordId}": {
+      "schema": "AllocationRecord",
+      "description": "Collection of all machine allocation history."
+    }
+  }
+}
