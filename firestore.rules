@@ -21,17 +21,27 @@ service cloud.firestore {
     }
 
     function isValidAllocation(data) {
-      return data.id is string &&
-             data.date is string &&
+      return data.date is string &&
              data.totalUnits is number &&
              data.allocations is map;
     }
 
+    function isValidStaff(data) {
+      return data.name is string &&
+             data.region in ['TW', 'CN'] &&
+             data.active is bool &&
+             data.inOffice is bool;
+    }
+
     match /allocations/{recordId} {
-      // Allow any authenticated user to read and write for this specific app
-      // In a production app, we might restrict by domain or specific users
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() && isValidAllocation(request.resource.data);
+      allow delete: if isAuthenticated();
+    }
+
+    match /staff/{staffId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && isValidStaff(request.resource.data);
       allow delete: if isAuthenticated();
     }
   }

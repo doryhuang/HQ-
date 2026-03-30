@@ -16,7 +16,11 @@ import {
   Calculator,
   AlertCircle,
   LogIn,
-  LogOut
+  LogOut,
+  Settings,
+  UserPlus,
+  ArrowRightLeft,
+  Trash2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { db, auth, signIn, logout } from './firebase';
@@ -28,7 +32,9 @@ import {
   orderBy, 
   deleteDoc, 
   doc,
-  getDocFromServer
+  getDocFromServer,
+  setDoc,
+  updateDoc
 } from 'firebase/firestore';
 import { onAuthStateChanged, User } from 'firebase/auth';
 
@@ -69,6 +75,12 @@ export default function App() {
   const [history, setHistory] = useState<AllocationRecord[]>([]);
   const [currentResult, setCurrentResult] = useState<{ [name: string]: number } | null>(null);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [showStaffModal, setShowStaffModal] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [newStaffName, setNewStaffName] = useState('');
+  const [newStaffRegion, setNewStaffRegion] = useState<'TW' | 'CN'>('TW');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   // --- Firebase Auth ---
   useEffect(() => {
@@ -97,35 +109,101 @@ export default function App() {
   useEffect(() => {
     if (!user) {
       setHistory([]);
+      setStaff(INITIAL_STAFF);
       return;
     }
 
-    const q = query(collection(db, 'allocations'), orderBy('date', 'desc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    // Sync History
+    const qHistory = query(collection(db, 'allocations'), orderBy('date', 'desc'));
+    const unsubHistory = onSnapshot(qHistory, (snapshot) => {
       const records: AllocationRecord[] = [];
       snapshot.forEach((doc) => {
         records.push({ ...doc.data(), id: doc.id } as AllocationRecord);
       });
       setHistory(records);
-    }, (error) => {
-      const errInfo = {
-        error: error.message,
-        operationType: 'list',
-        path: 'allocations',
-        authInfo: {
-          userId: auth.currentUser?.uid,
-          email: auth.currentUser?.email
-        }
-      };
-      console.error('Firestore Error: ', JSON.stringify(errInfo));
     });
 
-    return () => unsubscribe();
+    // Sync Staff
+    const qStaff = query(collection(db, 'staff'));
+    const unsubStaff = onSnapshot(qStaff, (snapshot) => {
+      if (snapshot.empty) {
+        // Seed initial staff if collection is empty
+        INITIAL_STAFF.forEach(async (s) => {
+          await setDoc(doc(db, 'staff', s.id), {
+            name: s.name,
+            region: s.region,
+            inOffice: s.inOffice,
+            active: true
+          });
+        });
+      } else {
+        const staffList: Staff[] = [];
+        snapshot.forEach((doc) => {
+          staffList.push({ ...doc.data(), id: doc.id } as Staff);
+        });
+        setStaff(staffList);
+      }
+    });
+
+    return () => {
+      unsubHistory();
+      unsubStaff();
+    };
   }, [user]);
 
   // --- Helpers ---
-  const toggleInOffice = (id: string) => {
-    setStaff(prev => prev.map(s => s.id === id ? { ...s, inOffice: !s.inOffice } : s));
+  const toggleInOffice = async (id: string) => {
+    if (!user) return;
+    const member = staff.find(s => s.id === id);
+    if (!member) return;
+    
+    try {
+      await updateDoc(doc(db, 'staff', id), {
+        inOffice: !member.inOffice
+      });
+    } catch (e) {
+      console.error("Failed to update inOffice status", e);
+    }
+  };
+
+  const updateStaffRegion = async (id: string, newRegion: 'TW' | 'CN') => {
+    if (!user) return;
+    try {
+      const member = staff.find(s => s.id === id);
+      if (!member) return;
+      await updateDoc(doc(db, 'staff', id), {
+        region: newRegion
+      });
+    } catch (e) {
+      console.error("Failed to update region", e);
+      alert("更新區域失敗，請檢查權限或網路。");
+    }
+  };
+
+  const addStaffMember = async () => {
+    if (!user || !newStaffName.trim()) return;
+    try {
+      const id = `staff-${Date.now()}`;
+      await setDoc(doc(db, 'staff', id), {
+        name: newStaffName.trim(),
+        region: newStaffRegion,
+        inOffice: true,
+        active: true
+      });
+      setNewStaffName('');
+    } catch (e) {
+      console.error("Failed to add staff", e);
+    }
+  };
+
+  const deleteStaffMember = async (id: string) => {
+    if (!user) return;
+    try {
+      await deleteDoc(doc(db, 'staff', id));
+      setConfirmDeleteId(null);
+    } catch (e) {
+      console.error("Failed to delete staff", e);
+    }
   };
 
   const calculateAllocation = () => {
@@ -177,8 +255,11 @@ export default function App() {
   };
 
   const saveAllocation = async () => {
-    if (!currentResult || !user) return;
+    if (!currentResult || !user || isSaving) return;
     
+    setIsSaving(true);
+    setSaveError(null);
+
     const newRecord = {
       date: new Date().toISOString(),
       totalUnits: parseInt(totalUnitsInput) || 0,
@@ -190,8 +271,10 @@ export default function App() {
       setTotalUnitsInput('');
       setCurrentResult(null);
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setSaveError(message);
       const errInfo = {
-        error: error instanceof Error ? error.message : String(error),
+        error: message,
         operationType: 'create',
         path: 'allocations',
         authInfo: {
@@ -200,6 +283,8 @@ export default function App() {
         }
       };
       console.error('Firestore Error: ', JSON.stringify(errInfo));
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -222,6 +307,15 @@ export default function App() {
   };
 
   // --- Statistics ---
+  const sortedStaff = useMemo(() => {
+    return [...staff].sort((a, b) => {
+      if (a.region !== b.region) {
+        return a.region === 'TW' ? -1 : 1;
+      }
+      return a.name.localeCompare(b.name);
+    });
+  }, [staff]);
+
   const monthlyStats = useMemo(() => {
     const stats: { [name: string]: number } = {};
     staff.forEach(s => stats[s.name] = 0);
@@ -262,6 +356,111 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#F5F5F4] text-[#1C1917] font-sans selection:bg-[#E7E5E4]">
+      {/* Staff Management Modal */}
+      <AnimatePresence>
+        {showStaffModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh]"
+            >
+              <div className="p-6 border-b border-[#E7E5E4] flex justify-between items-center bg-[#FAFAF9]">
+                <h3 className="text-lg font-bold flex items-center gap-2">
+                  <Settings size={20} />
+                  人員名單管理
+                </h3>
+                <button 
+                  onClick={() => setShowStaffModal(false)}
+                  className="p-2 hover:bg-[#E7E5E4] rounded-full transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                {/* Add New Staff */}
+                <div className="space-y-3">
+                  <p className="text-[10px] font-mono text-[#A8A29E] uppercase tracking-widest">新增人員</p>
+                  <div className="flex gap-2">
+                    <input 
+                      type="text" 
+                      value={newStaffName}
+                      onChange={(e) => setNewStaffName(e.target.value)}
+                      placeholder="姓名"
+                      className="flex-1 bg-[#F5F5F4] border border-[#E7E5E4] rounded-xl px-3 py-2 text-sm focus:outline-none"
+                    />
+                    <select 
+                      value={newStaffRegion}
+                      onChange={(e) => setNewStaffRegion(e.target.value as 'TW' | 'CN')}
+                      className="bg-[#F5F5F4] border border-[#E7E5E4] rounded-xl px-2 py-2 text-sm"
+                    >
+                      <option value="TW">TW</option>
+                      <option value="CN">CN</option>
+                    </select>
+                    <button 
+                      onClick={addStaffMember}
+                      className="bg-[#1C1917] text-white p-2 rounded-xl hover:bg-[#44403C]"
+                    >
+                      <UserPlus size={18} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Staff List */}
+                <div className="space-y-3">
+                  <p className="text-[10px] font-mono text-[#A8A29E] uppercase tracking-widest">現有人員</p>
+                  <div className="divide-y divide-[#F5F5F4]">
+                    {sortedStaff.map(member => (
+                      <div key={member.id} className="py-3 flex items-center justify-between group">
+                        <div>
+                          <p className="font-bold text-sm">{member.name}</p>
+                          <p className="text-[10px] text-[#A8A29E] font-mono">{member.region} 團隊</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {confirmDeleteId === member.id ? (
+                            <div className="flex items-center gap-1">
+                              <button 
+                                onClick={() => deleteStaffMember(member.id)}
+                                className="px-2 py-1 bg-red-500 text-white text-[10px] rounded hover:bg-red-600"
+                              >
+                                刪除
+                              </button>
+                              <button 
+                                onClick={() => setConfirmDeleteId(null)}
+                                className="px-2 py-1 bg-[#E7E5E4] text-[#78716C] text-[10px] rounded hover:bg-[#D6D3D1]"
+                              >
+                                取消
+                              </button>
+                            </div>
+                          ) : (
+                            <>
+                              <button 
+                                onClick={() => updateStaffRegion(member.id, member.region === 'TW' ? 'CN' : 'TW')}
+                                className="p-2 text-[#78716C] hover:bg-[#F5F5F4] rounded-lg transition-colors"
+                                title="切換區域"
+                              >
+                                <ArrowRightLeft size={16} />
+                              </button>
+                              <button 
+                                onClick={() => setConfirmDeleteId(member.id)}
+                                className="p-2 text-[#A8A29E] hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* History Modal */}
       <AnimatePresence>
         {showHistoryModal && (
@@ -440,6 +639,13 @@ export default function App() {
               <h2 className="text-xs font-mono uppercase tracking-widest text-[#78716C] mb-6 flex items-center gap-2">
                 <Users size={14} />
                 02. 到班人員
+                <button 
+                  onClick={() => setShowStaffModal(true)}
+                  className="ml-auto p-1 hover:bg-[#E7E5E4] rounded transition-colors text-[#A8A29E] hover:text-[#1C1917]"
+                  title="管理人員名單"
+                >
+                  <Settings size={14} />
+                </button>
               </h2>
               <div className="space-y-4">
                 {['TW', 'CN'].map(region => (
@@ -451,7 +657,7 @@ export default function App() {
                       </span>
                     </div>
                     <div className="divide-y divide-[#F5F5F4]">
-                      {staff.filter(s => s.region === region).map(member => (
+                      {sortedStaff.filter(s => s.region === region).map(member => (
                         <div 
                           key={member.id}
                           onClick={() => toggleInOffice(member.id)}
@@ -505,11 +711,24 @@ export default function App() {
                     </div>
                     <button
                       onClick={saveAllocation}
-                      className="w-full bg-white text-[#1C1917] py-4 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-[#F5F5F4] transition-colors"
+                      disabled={isSaving}
+                      className={`w-full py-4 rounded-xl font-bold flex items-center justify-center gap-2 transition-colors ${
+                        isSaving ? 'bg-[#44403C] text-[#A8A29E] cursor-not-allowed' : 'bg-white text-[#1C1917] hover:bg-[#F5F5F4]'
+                      }`}
                     >
-                      <Save size={18} />
-                      確認並儲存紀錄
+                      {isSaving ? (
+                        <div className="w-5 h-5 border-2 border-[#A8A29E] border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <Save size={18} />
+                      )}
+                      {isSaving ? '儲存中...' : '確認並儲存紀錄'}
                     </button>
+                    {saveError && (
+                      <p className="mt-4 text-red-400 text-xs text-center flex items-center justify-center gap-1">
+                        <AlertCircle size={12} />
+                        儲存失敗: {saveError}
+                      </p>
+                    )}
                   </div>
                 </motion.section>
               ) : (
@@ -528,7 +747,7 @@ export default function App() {
               </h2>
               <div className="bg-white rounded-2xl border border-[#E7E5E4] p-6">
                 <div className="space-y-4">
-                  {staff.map(member => (
+                  {sortedStaff.map(member => (
                     <div key={member.id} className="flex items-center gap-4">
                       <div className="w-24 text-sm font-medium text-[#78716C]">{member.name}</div>
                       <div className="flex-1 h-2 bg-[#F5F5F4] rounded-full overflow-hidden">

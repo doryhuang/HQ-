@@ -24,12 +24,41 @@
         }
       },
       "required": ["id", "date", "totalUnits", "allocations"]
+    },
+    "Staff": {
+      "title": "Staff",
+      "description": "A staff member who can be allocated machines.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the staff member."
+        },
+        "name": {
+          "type": "string",
+          "description": "Name of the staff member."
+        },
+        "region": {
+          "type": "string",
+          "enum": ["TW", "CN"],
+          "description": "The region the staff member belongs to."
+        },
+        "active": {
+          "type": "boolean",
+          "description": "Whether the staff member is currently part of the rotation."
+        }
+      },
+      "required": ["id", "name", "region", "active"]
     }
   },
   "firestore": {
     "/allocations/{recordId}": {
       "schema": "AllocationRecord",
       "description": "Collection of all machine allocation history."
+    },
+    "/staff/{staffId}": {
+      "schema": "Staff",
+      "description": "Collection of staff members."
     }
   }
 }
