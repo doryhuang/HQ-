@@ -20,7 +20,9 @@ import {
   Settings,
   UserPlus,
   ArrowRightLeft,
-  Trash2
+  Trash2,
+  Plus,
+  Minus
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { db, auth, signIn, logout } from './firebase';
@@ -254,15 +256,28 @@ export default function App() {
     setCurrentResult(result);
   };
 
+  const adjustAllocation = (name: string, delta: number) => {
+    if (!currentResult) return;
+    setCurrentResult(prev => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        [name]: Math.max(0, (prev[name] || 0) + delta)
+      };
+    });
+  };
+
   const saveAllocation = async () => {
     if (!currentResult || !user || isSaving) return;
     
     setIsSaving(true);
     setSaveError(null);
 
+    const totalAllocated = Object.values(currentResult).reduce((acc: number, curr: number) => acc + curr, 0);
+
     const newRecord = {
       date: new Date().toISOString(),
-      totalUnits: parseInt(totalUnitsInput) || 0,
+      totalUnits: totalAllocated,
       allocations: currentResult
     };
 
@@ -702,13 +717,38 @@ export default function App() {
                   </h2>
                   <div className="bg-[#1C1917] text-white p-8 rounded-2xl shadow-xl">
                     <div className="space-y-4 mb-8">
-                      {Object.entries(currentResult).map(([name, count]) => (
-                        <div key={name} className="flex justify-between items-center border-b border-white/10 pb-3">
-                          <span className="text-white font-bold">{name}</span>
-                          <span className="text-2xl font-mono">{count}</span>
-                        </div>
-                      ))}
+                      {sortedStaff.map(member => {
+                        const count = currentResult[member.name] || 0;
+                        return (
+                          <div key={member.id} className="flex justify-between items-center border-b border-white/10 pb-3">
+                            <span className="text-white font-bold">{member.name}</span>
+                            <div className="flex items-center gap-4">
+                              <button 
+                                onClick={() => adjustAllocation(member.name, -1)}
+                                className="w-8 h-8 flex items-center justify-center rounded-full border border-white/20 hover:bg-white/10 transition-colors"
+                              >
+                                <Minus size={14} />
+                              </button>
+                              <span className="text-2xl font-mono w-6 text-center">{count}</span>
+                              <button 
+                                onClick={() => adjustAllocation(member.name, 1)}
+                                className="w-8 h-8 flex items-center justify-center rounded-full border border-white/20 hover:bg-white/10 transition-colors"
+                              >
+                                <Plus size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
+
+                    <div className="mb-8 pt-4 border-t border-white/10 flex justify-between items-center">
+                      <span className="text-white/50 text-[10px] font-mono uppercase tracking-widest">目前分配總計</span>
+                      <span className="text-xl font-mono font-bold">
+                        {Object.values(currentResult).reduce((acc: number, curr: number) => acc + curr, 0)} 台
+                      </span>
+                    </div>
+
                     <button
                       onClick={saveAllocation}
                       disabled={isSaving}
@@ -834,7 +874,7 @@ export default function App() {
       {/* Footer */}
       <footer className="max-w-7xl mx-auto px-6 py-12 border-t border-[#E7E5E4] text-center">
         <p className="text-[10px] font-mono text-[#A8A29E] uppercase tracking-widest">
-          Furbo Internal Tool • Built for TW/CN Support Teams
+          © 2026 Furbo Internal Tool • Built for TW/CN Support Teams
         </p>
       </footer>
     </div>
