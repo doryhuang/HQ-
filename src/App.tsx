@@ -22,7 +22,10 @@ import {
   ArrowRightLeft,
   Trash2,
   Plus,
-  Minus
+  Minus,
+  HelpCircle,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { db, auth, signIn, logout } from './firebase';
@@ -83,6 +86,8 @@ export default function App() {
   const [newStaffName, setNewStaffName] = useState('');
   const [newStaffRegion, setNewStaffRegion] = useState<'TW' | 'CN'>('TW');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmDeleteRecordId, setConfirmDeleteRecordId] = useState<string | null>(null);
+  const [showSteps, setShowSteps] = useState(false);
 
   // --- Firebase Auth ---
   useEffect(() => {
@@ -307,6 +312,7 @@ export default function App() {
     if (!user) return;
     try {
       await deleteDoc(doc(db, 'allocations', id));
+      setConfirmDeleteRecordId(null);
     } catch (error) {
       const errInfo = {
         error: error instanceof Error ? error.message : String(error),
@@ -601,6 +607,46 @@ export default function App() {
       </header>
 
       <main className="max-w-7xl mx-auto px-6 py-12 space-y-16">
+        {/* Operation Steps */}
+        <section className="mb-8">
+          <button 
+            onClick={() => setShowSteps(!showSteps)}
+            className="flex items-center gap-2 text-xs font-mono uppercase tracking-widest text-[#78716C] hover:text-[#1C1917] transition-colors"
+          >
+            <HelpCircle size={14} />
+            操作步驟
+            {showSteps ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
+          <AnimatePresence>
+            {showSteps && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="mt-4 p-6 bg-white rounded-2xl border border-[#E7E5E4] shadow-sm">
+                  <ul className="space-y-3">
+                    {[
+                      '輸入數量',
+                      '刪除當天沒在公司人員',
+                      '點選【計算分配】',
+                      '確認並儲存紀錄'
+                    ].map((step, i) => (
+                      <li key={i} className="flex items-center gap-3 text-sm text-[#44403C]">
+                        <span className="w-5 h-5 flex items-center justify-center bg-[#F5F5F4] rounded-full text-[10px] font-bold font-mono text-[#A8A29E]">
+                          0{i + 1}
+                        </span>
+                        {step}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </section>
+
         {!user && isAuthReady ? (
           <div className="flex flex-col items-center justify-center py-24 bg-white rounded-3xl border border-[#E7E5E4] shadow-sm">
             <AlertCircle size={48} className="text-[#A8A29E] mb-4 opacity-20" />
@@ -819,18 +865,39 @@ export default function App() {
             <div className="space-y-4">
               {history.slice(0, 5).map(record => (
                 <div key={record.id} className="bg-[#FAFAF9] p-5 rounded-2xl border border-[#E7E5E4] flex justify-between items-center group hover:border-[#1C1917] transition-all">
-                  <div>
+                  <div className="flex-1">
                     <p className="text-[10px] font-mono text-[#A8A29E] uppercase mb-1">
                       {new Date(record.date).toLocaleDateString()} {new Date(record.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </p>
                     <p className="text-lg font-bold text-[#1C1917]">{record.totalUnits} 台已分配</p>
                   </div>
-                  <button 
-                    onClick={() => deleteRecord(record.id)}
-                    className="p-3 text-[#A8A29E] hover:text-red-500 hover:bg-red-50 rounded-full opacity-0 group-hover:opacity-100 transition-all"
-                  >
-                    <X size={20} />
-                  </button>
+                  
+                  <div className="flex items-center gap-2">
+                    {confirmDeleteRecordId === record.id ? (
+                      <div className="flex items-center gap-2 bg-white p-2 rounded-xl border border-red-100 shadow-sm">
+                        <button 
+                          onClick={() => deleteRecord(record.id)}
+                          className="px-3 py-1.5 bg-red-500 text-white text-xs font-bold rounded-lg hover:bg-red-600 transition-colors"
+                        >
+                          刪除
+                        </button>
+                        <button 
+                          onClick={() => setConfirmDeleteRecordId(null)}
+                          className="px-3 py-1.5 bg-[#E7E5E4] text-[#78716C] text-xs font-bold rounded-lg hover:bg-[#D6D3D1] transition-colors"
+                        >
+                          取消
+                        </button>
+                      </div>
+                    ) : (
+                      <button 
+                        onClick={() => setConfirmDeleteRecordId(record.id)}
+                        className="p-3 text-[#A8A29E] hover:text-red-500 hover:bg-red-50 rounded-full opacity-0 group-hover:opacity-100 transition-all"
+                        title="刪除紀錄"
+                      >
+                        <Trash2 size={20} />
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
               {history.length === 0 && (
